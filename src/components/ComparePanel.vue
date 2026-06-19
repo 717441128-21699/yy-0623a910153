@@ -18,7 +18,7 @@
       <div class="panel timeline-sidebar">
         <div class="sidebar-header">
           <h3>📋 就诊时间线</h3>
-          <span class="hint">点击选为基准/对比</span>
+          <span class="hint">粘接可选为基准/对比</span>
         </div>
         <div class="timeline-list">
           <div
@@ -27,34 +27,72 @@
             class="timeline-card"
             :class="{
               'sel-primary': primaryRecord?.id === ev.id && ev.type === 'bonding',
-              'sel-compare': compareRecord?.id === ev.id && ev.type === 'bonding'
+              'sel-compare': compareRecord?.id === ev.id && ev.type === 'bonding',
+              expanded: expandedTimelineId === ev.key
             }"
-            @click="selectRecord(ev)"
           >
-            <div class="tc-header">
+            <div class="tc-header" @click="toggleTimelineExpand(ev)">
               <span class="tc-date">{{ formatDate(ev.date) }}</span>
               <div class="tc-badges">
                 <span v-if="ev.type === 'bonding'" class="badge badge-blue">粘接</span>
                 <span v-else class="badge badge-purple">复诊</span>
                 <span v-if="primaryRecord?.id === ev.id && ev.type === 'bonding'" class="badge badge-blue">基准</span>
                 <span v-if="compareRecord?.id === ev.id && ev.type === 'bonding'" class="badge badge-purple">对比</span>
+                <span class="tc-expand">{{ expandedTimelineId === ev.key ? '▲' : '▼' }}</span>
               </div>
             </div>
+
             <div v-if="ev.type === 'bonding'" class="tc-stats">
               <span class="badge badge-gray">附件 {{ getAttachCount(ev.id) }}颗</span>
               <span class="badge badge-gray">照片 {{ getPhotoCount(ev.id) }}张</span>
             </div>
             <div v-else class="tc-stats">
               <span class="badge badge-gray">检查 {{ getCheckupItemCount(ev.id) }}颗</span>
+              <span class="badge badge-gray">照片 {{ getCheckupPhotoCount(ev.id) }}张</span>
             </div>
+
+            <div v-if="ev.type === 'checkup'" class="tc-status-bar">
+              <div v-for="s in checkupSummary(ev.id)" :key="s.status" class="sb-seg" :class="'sb-' + s.cls" :style="{ width: getCheckupRatio(ev.id, s.count) + '%' }">
+                <span v-if="s.count > 0" class="sb-label">{{ s.count }}</span>
+              </div>
+            </div>
+
             <div v-if="ev.notes" class="tc-notes">{{ ev.notes }}</div>
-            <div v-if="ev.type === 'bonding' && getAttachList(ev.id).length" class="tc-teeth">
-              {{ getAttachList(ev.id).join('、') }}
-            </div>
-            <div v-if="ev.type === 'checkup'" class="tc-checkup-summary">
-              <span v-for="s in checkupSummary(ev.id)" :key="s.status" class="mini-badge" :class="'mb-' + s.cls">
-                {{ s.label }} {{ s.count }}
-              </span>
+
+            <div v-if="expandedTimelineId === ev.key" class="tc-expand-body">
+              <div v-if="ev.type === 'bonding'" class="tc-teeth-list">
+                <div class="tc-expand-title">附件明细 ({{ getAttachCount(ev.id) }}颗)</div>
+                <div class="teeth-grid">
+                  <span v-for="att in getAttachItems(ev.id)" :key="att.tooth_number" class="tooth-pill">
+                    <span class="tp-num">{{ att.tooth_number }}</span>
+                    <span class="tp-shape">{{ att.shape }}</span>
+                  </span>
+                </div>
+              </div>
+
+              <div v-else class="tc-teeth-list">
+                <div class="tc-expand-title">检查明细 ({{ getCheckupItemCount(ev.id) }}颗)</div>
+                <div class="teeth-grid">
+                  <span v-for="item in getCheckupItems(ev.id)" :key="item.tooth_number" class="tooth-pill" :class="'tp-st-' + item.check_status">
+                    <span class="tp-num">{{ item.tooth_number }}</span>
+                    <span class="tp-status">{{ statusLabel(item.check_status) }}</span>
+                  </span>
+                </div>
+                <div v-if="getCheckupItems(ev.id).length === 0" class="empty-small">暂无明细</div>
+              </div>
+
+              <div v-if="getPhotosByEvent(ev).length > 0" class="tc-photos">
+                <div class="tc-expand-title">照片 ({{ getPhotosByEvent(ev).length }}张)</div>
+                <div class="tc-photos-grid">
+                  <div v-for="(p, i) in getPhotosByEvent(ev)" :key="i" class="tc-photo-thumb" @click.stop="openEventPhoto(ev, i)">
+                    <img :src="p.preview" />
+                  </div>
+                </div>
+              </div>
+
+              <button v-if="ev.type === 'bonding'" class="btn btn-primary btn-sm btn-full" @click.stop="selectRecord(ev)">
+                {{ primaryRecord?.id === ev.id ? '已设为基准' : '设为基准记录' }}
+              </button>
             </div>
           </div>
         </div>
@@ -279,6 +317,9 @@ const checkups = ref([])
 const attachmentsByRecord = reactive({})
 const photosByRecord = reactive({})
 const checkupItemsMap = reactive({})
+const checkupPhotosByCheckup = reactive({})
+
+const expandedTimelineId = ref(null)
 
 const primaryRecord = ref(null)
 const compareRecord = ref(null)
@@ -379,6 +420,7 @@ async function loadData() {
   for (const k of Object.keys(attachmentsByRecord)) delete attachmentsByRecord[k]
   for (const k of Object.keys(photosByRecord)) delete photosByRecord[k]
   for (const k of Object.keys(checkupItemsMap)) delete checkupItemsMap[k]
+  for (const k of Object.keys(checkupPhotosByCheckup)) delete checkupPhotosByCheckup[k]
 
   for (const r of records.value) {
     attachmentsByRecord[r.id] = await window.electronAPI.listAttachments(r.id)
@@ -391,6 +433,11 @@ async function loadData() {
 
   for (const c of checkups.value) {
     checkupItemsMap[c.id] = await window.electronAPI.listCheckupItems(c.id)
+    const chPhs = await window.electronAPI.listCheckupPhotos(c.id)
+    for (const p of chPhs) {
+      p.preview = await window.electronAPI.readPhoto(p.file_path)
+    }
+    checkupPhotosByCheckup[c.id] = chPhs
   }
 
   if (records.value.length > 0) {
