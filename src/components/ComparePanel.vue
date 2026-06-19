@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <div v-else-if="records.length < 1" class="panel empty-panel">
+    <div v-else-if="allEvents.length === 0" class="panel empty-panel">
       <div class="empty-state">
         <div class="empty-state-icon">📝</div>
         <div class="empty-state-text">暂无就诊记录，先去「快速记录」创建一条吧</div>
@@ -15,50 +15,58 @@
     </div>
 
     <div v-else class="compare-layout">
-      <!-- Left sidebar: Record list timeline -->
       <div class="panel timeline-sidebar">
         <div class="sidebar-header">
           <h3>📋 就诊时间线</h3>
-          <span class="hint">选择 1-2 次记录对比</span>
+          <span class="hint">点击选为基准/对比</span>
         </div>
         <div class="timeline-list">
           <div
-            v-for="r in records"
-            :key="r.id"
+            v-for="ev in allEvents"
+            :key="ev.key"
             class="timeline-card"
             :class="{
-              'sel-primary': primaryRecord?.id === r.id,
-              'sel-compare': compareRecord?.id === r.id
+              'sel-primary': primaryRecord?.id === ev.id && ev.type === 'bonding',
+              'sel-compare': compareRecord?.id === ev.id && ev.type === 'bonding'
             }"
-            @click="selectRecord(r)"
+            @click="selectRecord(ev)"
           >
             <div class="tc-header">
-              <span class="tc-date">{{ formatDate(r.record_date) }}</span>
+              <span class="tc-date">{{ formatDate(ev.date) }}</span>
               <div class="tc-badges">
-                <span v-if="primaryRecord?.id === r.id" class="badge badge-blue">基准</span>
-                <span v-if="compareRecord?.id === r.id" class="badge badge-purple">对比</span>
+                <span v-if="ev.type === 'bonding'" class="badge badge-blue">粘接</span>
+                <span v-else class="badge badge-purple">复诊</span>
+                <span v-if="primaryRecord?.id === ev.id && ev.type === 'bonding'" class="badge badge-blue">基准</span>
+                <span v-if="compareRecord?.id === ev.id && ev.type === 'bonding'" class="badge badge-purple">对比</span>
               </div>
             </div>
-            <div class="tc-stats">
-              <span class="badge badge-gray">附件 {{ getAttachCount(r.id) }}颗</span>
-              <span class="badge badge-gray">照片 {{ getPhotoCount(r.id) }}张</span>
+            <div v-if="ev.type === 'bonding'" class="tc-stats">
+              <span class="badge badge-gray">附件 {{ getAttachCount(ev.id) }}颗</span>
+              <span class="badge badge-gray">照片 {{ getPhotoCount(ev.id) }}张</span>
             </div>
-            <div v-if="r.notes" class="tc-notes">{{ r.notes }}</div>
-            <div v-if="getAttachList(r.id).length" class="tc-teeth">
-              {{ getAttachList(r.id).join('、') }}
+            <div v-else class="tc-stats">
+              <span class="badge badge-gray">检查 {{ getCheckupItemCount(ev.id) }}颗</span>
+            </div>
+            <div v-if="ev.notes" class="tc-notes">{{ ev.notes }}</div>
+            <div v-if="ev.type === 'bonding' && getAttachList(ev.id).length" class="tc-teeth">
+              {{ getAttachList(ev.id).join('、') }}
+            </div>
+            <div v-if="ev.type === 'checkup'" class="tc-checkup-summary">
+              <span v-for="s in checkupSummary(ev.id)" :key="s.status" class="mini-badge" :class="'mb-' + s.cls">
+                {{ s.label }} {{ s.count }}
+              </span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Main content: Comparison -->
       <div class="compare-main">
         <div class="panel compare-charts">
           <div class="compare-chart" :class="{ single: !compareRecord }">
             <div class="chart-title">
               <span class="title-dot primary"></span>
               <span class="title-text">
-                {{ primaryRecord ? formatDate(primaryRecord.record_date) : '请选择基准记录' }}
+                {{ primaryRecord ? formatDate(primaryRecord.record_date) : '请选择基准粘接记录' }}
               </span>
               <span v-if="primaryRecord" class="title-count">{{ getAttachCount(primaryRecord.id) }}颗附件</span>
             </div>
@@ -85,28 +93,33 @@
           </div>
         </div>
 
-        <!-- Status legend -->
         <div class="panel compare-legend">
           <div class="legend-row">
-            <span class="legend-item"><span class="badge badge-blue">基准记录</span> 作为本次复诊的参考（上次应有状态）</span>
+            <span class="legend-item"><span class="badge badge-blue">基准记录</span> 上次应有附件状态</span>
           </div>
           <div class="legend-row">
             <span class="legend-item"><span class="dot green"></span>完好</span>
             <span class="legend-item"><span class="dot yellow"></span>磨耗</span>
             <span class="legend-item"><span class="dot red"></span>脱落</span>
-            <span class="legend-item"><span class="dot blue"></span>重粘/新增</span>
-            <span class="legend-item"><span class="dot purple"></span>历史记录</span>
+            <span class="legend-item"><span class="dot blue"></span>重粘</span>
+            <span class="legend-item"><span class="dot purple"></span>历史</span>
           </div>
         </div>
 
-        <!-- Check & Mark panel -->
         <div class="panel check-panel" v-if="primaryRecord">
           <div class="check-header">
             <h3>🔍 本次复诊检查</h3>
-            <button class="btn btn-secondary btn-sm" @click="clearMarks">清空标记</button>
+            <div class="check-actions">
+              <button class="btn btn-secondary btn-sm" @click="clearMarks">清空</button>
+              <button
+                class="btn btn-primary btn-sm"
+                :disabled="summary.marked === 0"
+                @click="saveCheckup"
+              >保存检查记录</button>
+            </div>
           </div>
 
-          <div class="check-hint">在下方列表中点击每颗牙的当前状态：</div>
+          <div class="check-hint">点击标记每颗牙的当前状态，完成后点「保存检查记录」：</div>
 
           <div class="check-grid">
             <div
@@ -122,36 +135,12 @@
                 </span>
               </div>
               <div class="ci-buttons">
-                <button
-                  class="st-btn green"
-                  :class="{ active: checkResults[tooth] === 'good' }"
-                  @click="markStatus(tooth, 'good')"
-                  title="完好"
-                >✓</button>
-                <button
-                  class="st-btn yellow"
-                  :class="{ active: checkResults[tooth] === 'worn' }"
-                  @click="markStatus(tooth, 'worn')"
-                  title="磨耗"
-                >⚠</button>
-                <button
-                  class="st-btn red"
-                  :class="{ active: checkResults[tooth] === 'lost' }"
-                  @click="markStatus(tooth, 'lost')"
-                  title="脱落"
-                >✕</button>
-                <button
-                  class="st-btn blue"
-                  :class="{ active: checkResults[tooth] === 'rebond' }"
-                  @click="markStatus(tooth, 'rebond')"
-                  title="重粘"
-                >↻</button>
+                <button class="st-btn green" :class="{ active: checkResults[tooth] === 'good' }" @click="markStatus(tooth, 'good')" title="完好">✓</button>
+                <button class="st-btn yellow" :class="{ active: checkResults[tooth] === 'worn' }" @click="markStatus(tooth, 'worn')" title="磨耗">⚠</button>
+                <button class="st-btn red" :class="{ active: checkResults[tooth] === 'lost' }" @click="markStatus(tooth, 'lost')" title="脱落">✕</button>
+                <button class="st-btn blue" :class="{ active: checkResults[tooth] === 'rebond' }" @click="markStatus(tooth, 'rebond')" title="重粘">↻</button>
               </div>
-              <input
-                v-model="checkNotes[tooth]"
-                class="ci-note"
-                placeholder="备注..."
-              />
+              <input v-model="checkNotes[tooth]" class="ci-note" placeholder="备注..." />
             </div>
           </div>
 
@@ -160,40 +149,20 @@
             <div class="empty-state-text">基准记录中暂无附件</div>
           </div>
 
-          <!-- Summary -->
           <div class="check-summary" v-if="summary.total > 0">
             <div class="divider"></div>
             <h4 class="sum-title">检查结果汇总</h4>
             <div class="sum-stats">
-              <div class="sum-stat">
-                <span class="sum-label">应检查</span>
-                <span class="sum-value">{{ summary.total }}</span>
-              </div>
-              <div class="sum-stat">
-                <span class="sum-label">已标记</span>
-                <span class="sum-value">{{ summary.marked }}</span>
-              </div>
-              <div class="sum-stat good">
-                <span class="sum-label">完好</span>
-                <span class="sum-value">{{ summary.good }}</span>
-              </div>
-              <div class="sum-stat worn">
-                <span class="sum-label">磨耗</span>
-                <span class="sum-value">{{ summary.worn }}</span>
-              </div>
-              <div class="sum-stat lost">
-                <span class="sum-label">脱落</span>
-                <span class="sum-value">{{ summary.lost }}</span>
-              </div>
-              <div class="sum-stat rebond">
-                <span class="sum-label">重粘</span>
-                <span class="sum-value">{{ summary.rebond }}</span>
-              </div>
+              <div class="sum-stat"><span class="sum-label">应检查</span><span class="sum-value">{{ summary.total }}</span></div>
+              <div class="sum-stat"><span class="sum-label">已标记</span><span class="sum-value">{{ summary.marked }}</span></div>
+              <div class="sum-stat good"><span class="sum-label">完好</span><span class="sum-value">{{ summary.good }}</span></div>
+              <div class="sum-stat worn"><span class="sum-label">磨耗</span><span class="sum-value">{{ summary.worn }}</span></div>
+              <div class="sum-stat lost"><span class="sum-label">脱落</span><span class="sum-value">{{ summary.lost }}</span></div>
+              <div class="sum-stat rebond"><span class="sum-label">重粘</span><span class="sum-value">{{ summary.rebond }}</span></div>
             </div>
           </div>
         </div>
 
-        <!-- Photos comparison -->
         <div class="panel photos-panel" v-if="primaryRecord && (primaryPhotos.length || comparePhotos.length)">
           <div class="check-header">
             <h3>📷 照片对比</h3>
@@ -206,9 +175,7 @@
                 ({{ primaryPhotos.length }}张)
               </div>
               <div class="photos-grid">
-                <div v-for="(p, i) in primaryPhotos" :key="'p'+i" class="photo-thumb">
-                  <img :src="p.preview" />
-                </div>
+                <div v-for="(p, i) in primaryPhotos" :key="'p'+i" class="photo-thumb"><img :src="p.preview" /></div>
                 <div v-if="primaryPhotos.length === 0" class="empty-photos">无照片</div>
               </div>
             </div>
@@ -219,9 +186,7 @@
                 ({{ comparePhotos.length }}张)
               </div>
               <div class="photos-grid">
-                <div v-for="(p, i) in comparePhotos" :key="'c'+i" class="photo-thumb">
-                  <img :src="p.preview" />
-                </div>
+                <div v-for="(p, i) in comparePhotos" :key="'c'+i" class="photo-thumb"><img :src="p.preview" /></div>
                 <div v-if="comparePhotos.length === 0" class="empty-photos">无照片</div>
               </div>
             </div>
@@ -233,14 +198,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import ToothChart from './ToothChart.vue'
 
 const props = defineProps({ patient: Object })
 
 const records = ref([])
+const checkups = ref([])
 const attachmentsByRecord = reactive({})
 const photosByRecord = reactive({})
+const checkupItemsMap = reactive({})
 
 const primaryRecord = ref(null)
 const compareRecord = ref(null)
@@ -256,6 +223,18 @@ const statusColors = {
   new: 'purple',
   history: 'purple'
 }
+
+const allEvents = computed(() => {
+  const events = []
+  for (const r of records.value) {
+    events.push({ key: 'bonding-' + r.id, type: 'bonding', id: r.id, date: r.record_date, notes: r.notes, ref: r })
+  }
+  for (const c of checkups.value) {
+    events.push({ key: 'checkup-' + c.id, type: 'checkup', id: c.id, date: c.checkup_date, notes: c.notes, ref: c })
+  }
+  events.sort((a, b) => new Date(b.date) - new Date(a.date))
+  return events
+})
 
 const primaryAttachments = computed(() => {
   if (!primaryRecord.value) return {}
@@ -315,15 +294,25 @@ watch(() => props.patient, async (p) => {
 
 async function loadData() {
   records.value = await window.electronAPI.listRecords(props.patient.id)
+  checkups.value = await window.electronAPI.listCheckups(props.patient.id)
+
+  for (const k of Object.keys(attachmentsByRecord)) delete attachmentsByRecord[k]
+  for (const k of Object.keys(photosByRecord)) delete photosByRecord[k]
+  for (const k of Object.keys(checkupItemsMap)) delete checkupItemsMap[k]
+
   for (const r of records.value) {
-    const atts = await window.electronAPI.listAttachments(r.id)
-    attachmentsByRecord[r.id] = atts
+    attachmentsByRecord[r.id] = await window.electronAPI.listAttachments(r.id)
     const phs = await window.electronAPI.listPhotos(r.id)
     for (const p of phs) {
       p.preview = await window.electronAPI.readPhoto(p.file_path)
     }
     photosByRecord[r.id] = phs
   }
+
+  for (const c of checkups.value) {
+    checkupItemsMap[c.id] = await window.electronAPI.listCheckupItems(c.id)
+  }
+
   if (records.value.length > 0) {
     primaryRecord.value = records.value[0]
     if (records.value.length > 1) {
@@ -333,16 +322,22 @@ async function loadData() {
   clearMarks()
 }
 
-function selectRecord(r) {
-  if (!primaryRecord.value || (primaryRecord.value.id !== r.id && !compareRecord.value)) {
-    primaryRecord.value = r
-  } else if (primaryRecord.value.id === r.id) {
+function selectRecord(ev) {
+  if (ev.type !== 'bonding') return
+  if (!primaryRecord.value || (primaryRecord.value.id !== ev.id)) {
+    if (primaryRecord.value?.id === ev.id) {
+      primaryRecord.value = compareRecord.value
+      compareRecord.value = null
+    } else if (compareRecord.value?.id === ev.id) {
+      compareRecord.value = null
+    } else if (!primaryRecord.value) {
+      primaryRecord.value = ev.ref
+    } else {
+      compareRecord.value = ev.ref
+    }
+  } else {
     primaryRecord.value = compareRecord.value
     compareRecord.value = null
-  } else if (compareRecord.value?.id === r.id) {
-    compareRecord.value = null
-  } else {
-    compareRecord.value = r
   }
   clearMarks()
 }
@@ -355,6 +350,22 @@ function getPhotoCount(recordId) {
 }
 function getAttachList(recordId) {
   return (attachmentsByRecord[recordId] || []).map(a => a.tooth_number)
+}
+function getCheckupItemCount(checkupId) {
+  return checkupItemsMap[checkupId]?.length || 0
+}
+function checkupSummary(checkupId) {
+  const items = checkupItemsMap[checkupId] || []
+  const counts = { good: 0, worn: 0, lost: 0, rebond: 0 }
+  for (const item of items) {
+    if (counts[item.check_status] !== undefined) counts[item.check_status]++
+  }
+  return [
+    { status: 'good', label: '完好', count: counts.good, cls: 'green' },
+    { status: 'worn', label: '磨耗', count: counts.worn, cls: 'yellow' },
+    { status: 'lost', label: '脱落', count: counts.lost, cls: 'red' },
+    { status: 'rebond', label: '重粘', count: counts.rebond, cls: 'blue' }
+  ].filter(s => s.count > 0)
 }
 function getToothShape(tooth) {
   if (!primaryRecord.value) return ''
@@ -374,6 +385,41 @@ function markStatus(tooth, status) {
 function clearMarks() {
   for (const k of Object.keys(checkResults)) delete checkResults[k]
   for (const k of Object.keys(checkNotes)) delete checkNotes[k]
+}
+
+async function saveCheckup() {
+  const items = []
+  for (const t of allCheckTeeth.value) {
+    const status = checkResults[t]
+    const notes = checkNotes[t] || ''
+    if (status) {
+      const atts = attachmentsByRecord[primaryRecord.value.id] || []
+      const att = atts.find(a => a.tooth_number === t)
+      items.push({
+        tooth_number: t,
+        original_shape: att?.shape || '',
+        check_status: status,
+        check_notes: notes
+      })
+    }
+  }
+  if (items.length === 0) return
+
+  await window.electronAPI.createCheckup({
+    patient_id: props.patient.id,
+    reference_record_id: primaryRecord.value.id,
+    items
+  })
+
+  checkups.value = await window.electronAPI.listCheckups(props.patient.id)
+  for (const c of checkups.value) {
+    if (!checkupItemsMap[c.id]) {
+      checkupItemsMap[c.id] = await window.electronAPI.listCheckupItems(c.id)
+    }
+  }
+
+  alert('复诊检查记录已保存！')
+  clearMarks()
 }
 
 function formatDate(d) {
@@ -414,15 +460,8 @@ function formatDate(d) {
   border-bottom: 1px solid var(--border);
   margin-bottom: 12px;
 }
-.sidebar-header h3 {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-.sidebar-header .hint {
-  font-size: 11px;
-  color: var(--text-muted);
-}
+.sidebar-header h3 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.sidebar-header .hint { font-size: 11px; color: var(--text-muted); }
 
 .timeline-list {
   flex: 1;
@@ -442,14 +481,8 @@ function formatDate(d) {
   transition: all 0.15s ease;
 }
 .timeline-card:hover { border-color: var(--border); }
-.timeline-card.sel-primary {
-  border-color: var(--primary);
-  background: var(--primary-light);
-}
-.timeline-card.sel-compare {
-  border-color: var(--accent);
-  background: #ede9fe;
-}
+.timeline-card.sel-primary { border-color: var(--primary); background: var(--primary-light); }
+.timeline-card.sel-compare { border-color: var(--accent); background: #ede9fe; }
 
 .tc-header {
   display: flex;
@@ -457,28 +490,24 @@ function formatDate(d) {
   align-items: center;
   margin-bottom: 6px;
 }
-.tc-date {
-  font-weight: 600;
-  font-size: 13px;
-}
+.tc-date { font-weight: 600; font-size: 13px; }
 .tc-badges { display: flex; gap: 4px; }
 
-.tc-stats {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
+.tc-stats { display: flex; gap: 6px; margin-bottom: 6px; }
+.tc-notes { font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 4px; }
+.tc-teeth { font-size: 11px; color: var(--accent); font-weight: 500; }
+
+.tc-checkup-summary { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.mini-badge {
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
 }
-.tc-notes {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.4;
-  margin-bottom: 4px;
-}
-.tc-teeth {
-  font-size: 11px;
-  color: var(--accent);
-  font-weight: 500;
-}
+.mb-green { background: #dcfce7; color: var(--success); }
+.mb-yellow { background: #fef3c7; color: var(--warning); }
+.mb-red { background: #fee2e2; color: var(--danger); }
+.mb-blue { background: #dbeafe; color: var(--primary); }
 
 .compare-main {
   flex: 1;
@@ -489,94 +518,35 @@ function formatDate(d) {
   padding-right: 4px;
 }
 
-.compare-charts {
-  display: flex;
-  gap: 16px;
-  padding: 16px;
-}
-.compare-chart {
-  flex: 1;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-}
+.compare-charts { display: flex; gap: 16px; padding: 16px; }
+.compare-chart { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
 .compare-chart.single { flex: 1; max-width: 600px; margin: 0 auto; }
 
-.chart-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.title-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
+.chart-title { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+.title-dot { width: 10px; height: 10px; border-radius: 50%; }
 .title-dot.primary { background: var(--primary); }
 .title-dot.compare { background: var(--accent); }
 .title-text { flex: 1; }
-.title-count {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-weight: normal;
-}
+.title-count { font-size: 11px; color: var(--text-muted); font-weight: normal; }
 
-.compare-legend {
-  padding: 12px 18px;
-}
-.legend-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
+.compare-legend { padding: 12px 18px; }
+.legend-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .legend-row:first-child { margin-bottom: 8px; }
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.legend-item .dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  display: inline-block;
-}
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.legend-item .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .legend-item .dot.green { background: var(--success); }
 .legend-item .dot.yellow { background: var(--warning); }
 .legend-item .dot.red { background: var(--danger); }
 .legend-item .dot.blue { background: var(--primary); }
 .legend-item .dot.purple { background: var(--accent); }
 
-.check-panel, .photos-panel {
-  padding: 16px 18px;
-}
-.check-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-.check-header h3 {
-  font-size: 15px;
-  font-weight: 600;
-}
-.check-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 14px;
-}
+.check-panel, .photos-panel { padding: 16px 18px; }
+.check-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.check-header h3 { font-size: 15px; font-weight: 600; }
+.check-actions { display: flex; gap: 8px; }
+.check-hint { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
 
-.check-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 10px;
-}
+.check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
 
 .check-item {
   display: flex;
@@ -593,34 +563,14 @@ function formatDate(d) {
 .check-item.st-lost { border-color: var(--danger); background: #fef2f2; }
 .check-item.st-rebond { border-color: var(--primary); background: #eff6ff; }
 
-.ci-tooth {
-  display: flex;
-  flex-direction: column;
-  min-width: 70px;
-}
-.ci-num {
-  font-weight: 700;
-  font-size: 14px;
-}
-.ci-shape {
-  font-size: 10px;
-  color: var(--text-muted);
-}
+.ci-tooth { display: flex; flex-direction: column; min-width: 70px; }
+.ci-num { font-weight: 700; font-size: 14px; }
+.ci-shape { font-size: 10px; color: var(--text-muted); }
 
-.ci-buttons {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
+.ci-buttons { display: flex; gap: 4px; flex-shrink: 0; }
 .st-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  border: 2px solid var(--border);
-  background: white;
-  transition: all 0.15s ease;
+  width: 30px; height: 30px; border-radius: 6px; font-size: 13px; font-weight: 700;
+  border: 2px solid var(--border); background: white; transition: all 0.15s ease;
 }
 .st-btn.green { color: var(--success); }
 .st-btn.yellow { color: var(--warning); }
@@ -632,94 +582,27 @@ function formatDate(d) {
 .st-btn.blue.active { background: var(--primary); color: white; border-color: var(--primary); }
 
 .ci-note {
-  flex: 1;
-  min-width: 0;
-  padding: 5px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  font-size: 12px;
-  background: white;
-  outline: none;
+  flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 5px; font-size: 12px; background: white; outline: none;
 }
 .ci-note:focus { border-color: var(--primary); }
 
-.check-summary {
-  margin-top: 16px;
-}
-.sum-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 12px;
-}
-.sum-stats {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.sum-stat {
-  background: #f3f4f6;
-  padding: 8px 14px;
-  border-radius: 8px;
-  text-align: center;
-  min-width: 70px;
-}
+.check-summary { margin-top: 16px; }
+.sum-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.sum-stats { display: flex; gap: 16px; flex-wrap: wrap; }
+.sum-stat { background: #f3f4f6; padding: 8px 14px; border-radius: 8px; text-align: center; min-width: 70px; }
 .sum-stat.good { background: #dcfce7; }
 .sum-stat.worn { background: #fef3c7; }
 .sum-stat.lost { background: #fee2e2; }
 .sum-stat.rebond { background: #dbeafe; }
+.sum-label { font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 2px; }
+.sum-value { font-size: 18px; font-weight: 700; }
 
-.sum-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  display: block;
-  margin-bottom: 2px;
-}
-.sum-value {
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.photos-compare {
-  display: flex;
-  gap: 16px;
-}
-.photos-col {
-  flex: 1;
-}
-.col-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 10px;
-  color: var(--text-muted);
-}
-
-.photos-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  gap: 8px;
-  min-height: 80px;
-}
-.photo-thumb {
-  aspect-ratio: 1;
-  border-radius: 6px;
-  overflow: hidden;
-  background: #000;
-}
-.photo-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.empty-photos {
-  grid-column: 1 / -1;
-  text-align: center;
-  padding: 20px;
-  color: var(--text-muted);
-  font-size: 12px;
-  background: #f9fafb;
-  border-radius: 6px;
-}
+.photos-compare { display: flex; gap: 16px; }
+.photos-col { flex: 1; }
+.col-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--text-muted); }
+.photos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; min-height: 80px; }
+.photo-thumb { aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: #000; }
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.empty-photos { grid-column: 1 / -1; text-align: center; padding: 20px; color: var(--text-muted); font-size: 12px; background: #f9fafb; border-radius: 6px; }
 </style>

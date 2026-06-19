@@ -8,13 +8,17 @@ class DB {
       patients: [],
       records: [],
       attachments: [],
-      photos: []
+      photos: [],
+      checkups: [],
+      checkup_items: []
     }
     this.ids = {
       patients: 0,
       records: 0,
       attachments: 0,
-      photos: 0
+      photos: 0,
+      checkups: 0,
+      checkup_items: 0
     }
   }
 
@@ -38,7 +42,9 @@ class DB {
       patients: this._maxId(this.data.patients),
       records: this._maxId(this.data.records),
       attachments: this._maxId(this.data.attachments),
-      photos: this._maxId(this.data.photos)
+      photos: this._maxId(this.data.photos),
+      checkups: this._maxId(this.data.checkups),
+      checkup_items: this._maxId(this.data.checkup_items)
     }
   }
 
@@ -118,6 +124,9 @@ class DB {
     this.data.records = this.data.records.filter(r => r.patient_id !== id)
     this.data.attachments = this.data.attachments.filter(a => !recordIds.includes(a.record_id))
     this.data.photos = this.data.photos.filter(p => !recordIds.includes(p.record_id))
+    const checkupIds = this.data.checkups.filter(c => c.patient_id === id).map(c => c.id)
+    this.data.checkups = this.data.checkups.filter(c => c.patient_id !== id)
+    this.data.checkup_items = this.data.checkup_items.filter(ci => !checkupIds.includes(ci.checkup_id))
     this._save()
     return { changes: before - this.data.patients.length }
   }
@@ -226,6 +235,154 @@ class DB {
     this.data.photos = this.data.photos.filter(p => p.id !== id)
     this._save()
     return { changes: before - this.data.photos.length }
+  }
+
+  // ---------- Checkups ----------
+  getCheckupsByPatient(patientId) {
+    return this.data.checkups
+      .filter(c => c.patient_id === patientId)
+      .sort((a, b) => new Date(b.checkup_date) - new Date(a.checkup_date))
+  }
+
+  getCheckup(id) {
+    return this.data.checkups.find(c => c.id === id) || null
+  }
+
+  createCheckup(data) {
+    const id = this._nextId('checkups')
+    const checkup = {
+      id,
+      patient_id: data.patient_id,
+      reference_record_id: data.reference_record_id || null,
+      checkup_date: data.checkup_date || this._now(),
+      notes: data.notes || ''
+    }
+    this.data.checkups.push(checkup)
+    if (data.items && data.items.length) {
+      for (const item of data.items) {
+        this.createCheckupItem({ ...item, checkup_id: id })
+      }
+    }
+    this._save()
+    return id
+  }
+
+  deleteCheckup(id) {
+    const before = this.data.checkups.length
+    this.data.checkups = this.data.checkups.filter(c => c.id !== id)
+    this.data.checkup_items = this.data.checkup_items.filter(ci => ci.checkup_id !== id)
+    this._save()
+    return { changes: before - this.data.checkups.length }
+  }
+
+  // ---------- Checkup Items ----------
+  getCheckupItemsByCheckup(checkupId) {
+    return this.data.checkup_items.filter(ci => ci.checkup_id === checkupId)
+  }
+
+  createCheckupItem(data) {
+    const id = this._nextId('checkup_items')
+    const item = {
+      id,
+      checkup_id: data.checkup_id,
+      tooth_number: data.tooth_number,
+      original_shape: data.original_shape || '',
+      check_status: data.check_status || '',
+      check_notes: data.check_notes || ''
+    }
+    this.data.checkup_items.push(item)
+    this._save()
+    return id
+  }
+
+  deleteCheckupItem(id) {
+    const before = this.data.checkup_items.length
+    this.data.checkup_items = this.data.checkup_items.filter(ci => ci.id !== id)
+    this._save()
+    return { changes: before - this.data.checkup_items.length }
+  }
+
+  // ---------- Export / Import ----------
+  getPatientFullData(patientId) {
+    const patient = this.getPatient(patientId)
+    if (!patient) return null
+    const records = this.data.records.filter(r => r.patient_id === patientId)
+    const recordIds = records.map(r => r.id)
+    const attachments = this.data.attachments.filter(a => recordIds.includes(a.record_id))
+    const photos = this.data.photos.filter(p => recordIds.includes(p.record_id))
+    const checkups = this.data.checkups.filter(c => c.patient_id === patientId)
+    const checkupIds = checkups.map(c => c.id)
+    const checkup_items = this.data.checkup_items.filter(ci => checkupIds.includes(ci.checkup_id))
+    return {
+      patient,
+      records,
+      attachments,
+      photos,
+      checkups,
+      checkup_items,
+      exported_at: this._now(),
+      version: 1
+    }
+  }
+
+  importPatientFullData(data) {
+    const pidOld = data.patient.id
+    const pidNew = this._nextId('patients')
+    const idMap = { patients: {}, records: {}, attachments: {}, photos: {}, checkups: {}, checkup_items: {} }
+    idMap.patients[pidOld] = pidNew
+
+    const patient = { ...data.patient, id: pidNew, created_at: this._now(), updated_at: this._now() }
+    this.data.patients.push(patient)
+
+    if (data.records) {
+      for (const r of data.records) {
+        const ridOld = r.id
+        const ridNew = this._nextId('records')
+        idMap.records[ridOld] = ridNew
+        this.data.records.push({
+          ...r, id: ridNew, patient_id: pidNew, record_date: r.record_date || this._now()
+        })
+      }
+    }
+
+    if (data.attachments) {
+      for (const a of data.attachments) {
+        const aidNew = this._nextId('attachments')
+        const mappedRid = idMap.records[a.record_id] || a.record_id
+        this.data.attachments.push({ ...a, id: aidNew, record_id: mappedRid })
+      }
+    }
+
+    if (data.photos) {
+      for (const p of data.photos) {
+        const pidNew2 = this._nextId('photos')
+        const mappedRid = idMap.records[p.record_id] || p.record_id
+        this.data.photos.push({ ...p, id: pidNew2, record_id: mappedRid })
+      }
+    }
+
+    if (data.checkups) {
+      for (const c of data.checkups) {
+        const cidOld = c.id
+        const cidNew = this._nextId('checkups')
+        idMap.checkups[cidOld] = cidNew
+        this.data.checkups.push({
+          ...c, id: cidNew, patient_id: pidNew,
+          reference_record_id: idMap.records[c.reference_record_id] || null
+        })
+      }
+    }
+
+    if (data.checkup_items) {
+      for (const ci of data.checkup_items) {
+        const ciiNew = this._nextId('checkup_items')
+        const mappedCid = idMap.checkups[ci.checkup_id] || ci.checkup_id
+        this.data.checkup_items.push({ ...ci, id: ciiNew, checkup_id: mappedCid })
+      }
+    }
+
+    this._save()
+    return pidNew
   }
 }
 

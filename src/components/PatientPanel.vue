@@ -2,14 +2,8 @@
   <div class="patient-panel">
     <aside class="patient-list panel">
       <div class="list-header">
-        <input
-          v-model="searchQuery"
-          class="input"
-          placeholder="搜索姓名 / 病历号..."
-        />
-        <button class="btn btn-primary btn-sm" @click="openForm()">
-          <span>＋</span> 新建
-        </button>
+        <input v-model="searchQuery" class="input" placeholder="搜索姓名 / 病历号..." />
+        <button class="btn btn-primary btn-sm" @click="openForm()"><span>＋</span> 新建</button>
       </div>
       <div class="list-body">
         <div v-if="filteredPatients.length === 0" class="empty-state">
@@ -43,42 +37,87 @@
         <div>
           <h2 class="detail-name">{{ selectedPatient.name }}</h2>
           <div class="detail-sub">
-            <span v-if="selectedPatient.record_no" class="badge badge-blue">
-              病历号: {{ selectedPatient.record_no }}
-            </span>
-            <span v-if="selectedPatient.appliance_brand" class="badge badge-purple">
-              {{ selectedPatient.appliance_brand }}
-            </span>
-            <span v-if="selectedPatient.current_aligner" class="badge badge-green">
-              当前第{{ selectedPatient.current_aligner }}副
-            </span>
+            <span v-if="selectedPatient.record_no" class="badge badge-blue">病历号: {{ selectedPatient.record_no }}</span>
+            <span v-if="selectedPatient.appliance_brand" class="badge badge-purple">{{ selectedPatient.appliance_brand }}</span>
+            <span v-if="selectedPatient.current_aligner" class="badge badge-green">当前第{{ selectedPatient.current_aligner }}副</span>
           </div>
         </div>
         <div class="detail-actions">
-          <button class="btn btn-secondary btn-sm" @click="openForm(selectedPatient)">
-            编辑信息
-          </button>
-          <button class="btn btn-primary btn-sm" @click="$emit('select', selectedPatient)">
-            开始记录
-          </button>
+          <button class="btn btn-secondary btn-sm" @click="exportPatient">📤 导出</button>
+          <button class="btn btn-secondary btn-sm" @click="importPatient">📥 导入</button>
+          <button class="btn btn-secondary btn-sm" @click="openForm(selectedPatient)">编辑信息</button>
+          <button class="btn btn-primary btn-sm" @click="$emit('select', selectedPatient)">开始记录</button>
         </div>
       </div>
 
       <div class="detail-section">
         <h3 class="section-title">📋 就诊记录时间线</h3>
-        <div v-if="records.length === 0" class="empty-state">
+        <div v-if="allEvents.length === 0" class="empty-state">
           <div class="empty-state-icon">📝</div>
           <div class="empty-state-text">暂无记录，开始第一次附件粘接记录</div>
         </div>
         <div v-else class="timeline">
-          <div v-for="r in records" :key="r.id" class="timeline-item">
-            <div class="timeline-dot"></div>
-            <div class="timeline-content">
-              <div class="timeline-date">{{ formatDate(r.record_date) }}</div>
-              <div v-if="r.notes" class="timeline-notes">{{ r.notes }}</div>
-              <div class="timeline-stats">
-                <span class="badge badge-blue">附件 {{ getAttachmentCount(r.id) }} 颗</span>
-                <span class="badge badge-gray">照片 {{ getPhotoCount(r.id) }} 张</span>
+          <div v-for="ev in allEvents" :key="ev.key" class="timeline-item">
+            <div class="timeline-dot" :class="ev.type === 'checkup' ? 'dot-checkup' : ''"></div>
+            <div class="timeline-content" :class="{ expanded: expandedEvent === ev.key }">
+              <div class="tl-row" @click="toggleExpand(ev.key)">
+                <div class="tl-left">
+                  <span class="tl-badge" v-if="ev.type === 'bonding'">粘接</span>
+                  <span class="tl-badge tl-checkup" v-else>复诊</span>
+                  <span class="tl-date">{{ formatDate(ev.date) }}</span>
+                </div>
+                <span class="tl-expand">{{ expandedEvent === ev.key ? '▲' : '▼' }}</span>
+              </div>
+
+              <div v-if="ev.type === 'bonding'" class="tl-stats">
+                <span class="badge badge-blue">附件 {{ getAttachmentCount(ev.id) }}颗</span>
+                <span class="badge badge-gray">照片 {{ getPhotoCount(ev.id) }}张</span>
+              </div>
+              <div v-else class="tl-stats">
+                <span v-for="s in checkupSummary(ev.id)" :key="s.status" class="mini-badge" :class="'mb-' + s.cls">
+                  {{ s.label }} {{ s.count }}
+                </span>
+              </div>
+              <div v-if="ev.notes" class="tl-notes">{{ ev.notes }}</div>
+
+              <!-- Expanded detail -->
+              <div v-if="expandedEvent === ev.key" class="tl-detail">
+                <div v-if="ev.type === 'bonding'" class="tl-attachments">
+                  <div v-for="att in getAttachments(ev.id)" :key="att.id" class="att-row">
+                    <span class="att-tooth">{{ att.tooth_number }}</span>
+                    <span class="att-shape">{{ att.shape || '未指定形态' }}</span>
+                    <span class="att-status badge" :class="att.status === 'rebond' ? 'badge-yellow' : 'badge-blue'">
+                      {{ att.status === 'rebond' ? '重粘' : '新粘接' }}
+                    </span>
+                    <span v-if="att.notes" class="att-notes">{{ att.notes }}</span>
+                  </div>
+                  <div v-if="getPhotos(ev.id).length > 0" class="tl-photos">
+                    <div v-for="(p, i) in getPhotos(ev.id)" :key="i" class="tl-photo-thumb">
+                      <img :src="p.preview" />
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else class="tl-checkup-detail">
+                  <table class="checkup-table">
+                    <thead>
+                      <tr>
+                        <th>牙位</th>
+                        <th>上次应有</th>
+                        <th>本次状态</th>
+                        <th>备注</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="item in getCheckupItems(ev.id)" :key="item.id">
+                        <td class="ct-tooth">{{ item.tooth_number }}</td>
+                        <td>{{ item.original_shape || '-' }}</td>
+                        <td><span class="status-tag" :class="'st-' + item.check_status">{{ statusLabel(item.check_status) }}</span></td>
+                        <td class="ct-notes">{{ item.check_notes || '-' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
@@ -121,13 +160,7 @@
           </div>
           <div class="form-row">
             <label class="label">当前副数</label>
-            <input
-              v-model.number="formData.current_aligner"
-              type="number"
-              min="0"
-              class="input"
-              placeholder="如：12"
-            />
+            <input v-model.number="formData.current_aligner" type="number" min="0" class="input" placeholder="如：12" />
           </div>
         </div>
         <div class="modal-footer">
@@ -142,26 +175,22 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 
-const props = defineProps({
-  selectedId: Number
-})
+const props = defineProps({ selectedId: Number })
 const emit = defineEmits(['select'])
 
 const patients = ref([])
 const records = ref([])
+const checkups = ref([])
 const attachmentsMap = ref({})
 const photosMap = ref({})
+const checkupItemsMap = ref({})
 const searchQuery = ref('')
 const selectedPatient = ref(null)
+const expandedEvent = ref(null)
 
 const formVisible = ref(false)
 const editingPatient = ref(null)
-const formData = ref({
-  name: '',
-  record_no: '',
-  appliance_brand: '',
-  current_aligner: 0
-})
+const formData = ref({ name: '', record_no: '', appliance_brand: '', current_aligner: 0 })
 
 const filteredPatients = computed(() => {
   if (!searchQuery.value) return patients.value
@@ -172,6 +201,18 @@ const filteredPatients = computed(() => {
   )
 })
 
+const allEvents = computed(() => {
+  const events = []
+  for (const r of records.value) {
+    events.push({ key: 'bonding-' + r.id, type: 'bonding', id: r.id, date: r.record_date, notes: r.notes })
+  }
+  for (const c of checkups.value) {
+    events.push({ key: 'checkup-' + c.id, type: 'checkup', id: c.id, date: c.checkup_date, notes: c.notes })
+  }
+  events.sort((a, b) => new Date(b.date) - new Date(a.date))
+  return events
+})
+
 watch(() => props.selectedId, (id) => {
   if (id) {
     const p = patients.value.find(x => x.id === id)
@@ -179,9 +220,7 @@ watch(() => props.selectedId, (id) => {
   }
 }, { immediate: true })
 
-onMounted(async () => {
-  await loadPatients()
-})
+onMounted(async () => { await loadPatients() })
 
 async function loadPatients() {
   patients.value = await window.electronAPI.listPatients()
@@ -189,13 +228,22 @@ async function loadPatients() {
 
 async function loadRecords(patientId) {
   records.value = await window.electronAPI.listRecords(patientId)
+  checkups.value = await window.electronAPI.listCheckups(patientId)
   attachmentsMap.value = {}
   photosMap.value = {}
+  checkupItemsMap.value = {}
+
   for (const r of records.value) {
-    const atts = await window.electronAPI.listAttachments(r.id)
-    attachmentsMap.value[r.id] = atts
+    attachmentsMap.value[r.id] = await window.electronAPI.listAttachments(r.id)
     const photos = await window.electronAPI.listPhotos(r.id)
+    for (const p of photos) {
+      p.preview = await window.electronAPI.readPhoto(p.file_path)
+    }
     photosMap.value[r.id] = photos
+  }
+
+  for (const c of checkups.value) {
+    checkupItemsMap.value[c.id] = await window.electronAPI.listCheckupItems(c.id)
   }
 }
 
@@ -203,6 +251,10 @@ async function selectPatient(p) {
   selectedPatient.value = p
   await loadRecords(p.id)
   emit('select', p)
+}
+
+function toggleExpand(key) {
+  expandedEvent.value = expandedEvent.value === key ? null : key
 }
 
 function openForm(patient) {
@@ -221,10 +273,7 @@ function closeForm() {
 }
 
 async function savePatient() {
-  if (!formData.value.name.trim()) {
-    alert('请填写患者姓名')
-    return
-  }
+  if (!formData.value.name.trim()) { alert('请填写患者姓名'); return }
   if (editingPatient.value) {
     await window.electronAPI.updatePatient(editingPatient.value.id, formData.value)
   } else {
@@ -233,9 +282,7 @@ async function savePatient() {
   await loadPatients()
   if (editingPatient.value) {
     const updated = patients.value.find(p => p.id === editingPatient.value.id)
-    if (updated && selectedPatient.value?.id === updated.id) {
-      selectedPatient.value = updated
-    }
+    if (updated && selectedPatient.value?.id === updated.id) selectedPatient.value = updated
   }
   closeForm()
 }
@@ -243,259 +290,201 @@ async function savePatient() {
 async function deletePatient(p) {
   if (!confirm(`确定删除患者 "${p.name}"？此操作会同时删除全部就诊记录。`)) return
   await window.electronAPI.deletePatient(p.id)
-  if (selectedPatient.value?.id === p.id) {
-    selectedPatient.value = null
-    records.value = []
-  }
+  if (selectedPatient.value?.id === p.id) { selectedPatient.value = null; records.value = []; checkups.value = [] }
   await loadPatients()
 }
 
-function getAttachmentCount(recordId) {
-  return attachmentsMap.value[recordId]?.length || 0
+async function exportPatient() {
+  if (!selectedPatient.value) return
+  const result = await window.electronAPI.exportPatientToFile(selectedPatient.value.id)
+  if (result) alert('导出成功！文件已保存。')
 }
 
-function getPhotoCount(recordId) {
-  return photosMap.value[recordId]?.length || 0
+async function importPatient() {
+  const newId = await window.electronAPI.importPatientFromFile()
+  if (newId) {
+    await loadPatients()
+    const imported = patients.value.find(p => p.id === newId)
+    if (imported) {
+      selectedPatient.value = imported
+      await loadRecords(newId)
+    }
+    alert('导入成功！')
+  }
+}
+
+function getAttachmentCount(recordId) { return attachmentsMap.value[recordId]?.length || 0 }
+function getPhotoCount(recordId) { return photosMap.value[recordId]?.length || 0 }
+function getAttachments(recordId) { return attachmentsMap.value[recordId] || [] }
+function getPhotos(recordId) { return photosMap.value[recordId] || [] }
+function getCheckupItems(checkupId) { return checkupItemsMap.value[checkupId] || [] }
+
+function checkupSummary(checkupId) {
+  const items = checkupItemsMap.value[checkupId] || []
+  const counts = { good: 0, worn: 0, lost: 0, rebond: 0 }
+  for (const item of items) {
+    if (counts[item.check_status] !== undefined) counts[item.check_status]++
+  }
+  return [
+    { status: 'good', label: '完好', count: counts.good, cls: 'green' },
+    { status: 'worn', label: '磨耗', count: counts.worn, cls: 'yellow' },
+    { status: 'lost', label: '脱落', count: counts.lost, cls: 'red' },
+    { status: 'rebond', label: '重粘', count: counts.rebond, cls: 'blue' }
+  ].filter(s => s.count > 0)
+}
+
+function statusLabel(s) {
+  const map = { good: '完好', worn: '磨耗', lost: '脱落', rebond: '重粘' }
+  return map[s] || s
 }
 
 function formatDate(d) {
   if (!d) return ''
-  const date = new Date(d)
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit'
+  return new Date(d).toLocaleString('zh-CN', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
   })
 }
 </script>
 
 <style scoped>
-.patient-panel {
-  display: flex;
-  gap: 20px;
-  height: 100%;
-}
+.patient-panel { display: flex; gap: 20px; height: 100%; }
 
 .patient-list {
-  width: 320px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  width: 320px; flex-shrink: 0; display: flex; flex-direction: column; overflow: hidden;
 }
-
-.list-header {
-  padding: 14px;
-  display: flex;
-  gap: 8px;
-  border-bottom: 1px solid var(--border);
-}
+.list-header { padding: 14px; display: flex; gap: 8px; border-bottom: 1px solid var(--border); }
 .list-header .input { flex: 1; }
 
-.list-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px;
-}
+.list-body { flex: 1; overflow-y: auto; padding: 8px; }
 
 .patient-item {
-  display: flex;
-  align-items: center;
-  padding: 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  gap: 10px;
-  transition: background 0.15s ease;
+  display: flex; align-items: center; padding: 10px; border-radius: 8px;
+  cursor: pointer; gap: 10px; transition: background 0.15s ease;
 }
 .patient-item:hover { background: #f9fafb; }
 .patient-item.active { background: var(--primary-light); }
 
 .patient-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #60a5fa, #a78bfa);
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 13px;
-  flex-shrink: 0;
+  width: 38px; height: 38px; border-radius: 50%;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa); color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 600; font-size: 13px; flex-shrink: 0;
 }
-
-.patient-info {
-  flex: 1;
-  min-width: 0;
-}
-.patient-name {
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 2px;
-}
-.patient-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+.patient-info { flex: 1; min-width: 0; }
+.patient-name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+.patient-meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 8px; flex-wrap: wrap; }
 
 .item-edit, .item-delete {
-  opacity: 0;
-  padding: 4px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-  transition: all 0.15s ease;
+  opacity: 0; padding: 4px 6px; border-radius: 4px; font-size: 13px; transition: all 0.15s ease;
 }
-.patient-item:hover .item-edit,
-.patient-item:hover .item-delete { opacity: 1; }
+.patient-item:hover .item-edit, .patient-item:hover .item-delete { opacity: 1; }
 .item-edit:hover { background: #e0e7ff; color: var(--primary); }
 .item-delete:hover { background: #fee2e2; color: var(--danger); }
 
-.patient-detail {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-}
-
-.empty-panel {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+.patient-detail { flex: 1; overflow-y: auto; padding: 24px; }
+.empty-panel { display: flex; align-items: center; justify-content: center; }
 
 .detail-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 20px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px;
 }
-.detail-name {
-  font-size: 22px;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-.detail-sub {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.detail-actions {
-  display: flex;
-  gap: 8px;
-}
+.detail-name { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+.detail-sub { display: flex; gap: 8px; flex-wrap: wrap; }
+.detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .detail-section { margin-top: 8px; }
-.section-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 16px;
-}
+.section-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
 
-.timeline {
-  position: relative;
-  padding-left: 20px;
-}
+.timeline { position: relative; padding-left: 20px; }
 .timeline::before {
-  content: '';
-  position: absolute;
-  left: 7px;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  background: var(--border);
+  content: ''; position: absolute; left: 7px; top: 4px; bottom: 4px;
+  width: 2px; background: var(--border);
 }
-
-.timeline-item {
-  position: relative;
-  padding-bottom: 20px;
-}
+.timeline-item { position: relative; padding-bottom: 16px; }
 .timeline-item:last-child { padding-bottom: 0; }
 
 .timeline-dot {
-  position: absolute;
-  left: -20px;
-  top: 4px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--primary);
-  border: 3px solid white;
+  position: absolute; left: -20px; top: 4px; width: 16px; height: 16px;
+  border-radius: 50%; background: var(--primary); border: 3px solid white;
   box-shadow: 0 0 0 2px var(--primary);
 }
+.timeline-dot.dot-checkup { background: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
 
 .timeline-content {
-  background: #f9fafb;
-  padding: 12px 14px;
-  border-radius: 8px;
+  background: #f9fafb; padding: 12px 14px; border-radius: 8px;
 }
-.timeline-date {
-  font-weight: 600;
-  font-size: 13px;
-  margin-bottom: 6px;
-  color: var(--text);
-}
-.timeline-notes {
-  font-size: 13px;
-  color: var(--text);
-  margin-bottom: 8px;
-  line-height: 1.5;
-}
-.timeline-stats { display: flex; gap: 6px; }
+.timeline-content.expanded { background: #f0f4ff; }
 
-/* Modal */
+.tl-row { display: flex; justify-content: space-between; align-items: center; cursor: pointer; margin-bottom: 6px; }
+.tl-left { display: flex; align-items: center; gap: 8px; }
+.tl-badge {
+  padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+  background: var(--primary-light); color: var(--primary);
+}
+.tl-badge.tl-checkup { background: #ede9fe; color: var(--accent); }
+.tl-date { font-weight: 600; font-size: 13px; }
+.tl-expand { font-size: 10px; color: var(--text-muted); }
+
+.tl-stats { display: flex; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+.tl-notes { font-size: 13px; color: var(--text); line-height: 1.5; margin-bottom: 4px; }
+
+.mini-badge { padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.mb-green { background: #dcfce7; color: var(--success); }
+.mb-yellow { background: #fef3c7; color: var(--warning); }
+.mb-red { background: #fee2e2; color: var(--danger); }
+.mb-blue { background: #dbeafe; color: var(--primary); }
+
+.tl-detail { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+.att-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0; font-size: 13px;
+}
+.att-row:last-child { border-bottom: none; }
+.att-tooth { font-weight: 700; min-width: 30px; }
+.att-shape { color: var(--text-muted); min-width: 70px; }
+.att-notes { color: var(--text-muted); font-size: 12px; flex: 1; }
+
+.tl-photos { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.tl-photo-thumb {
+  width: 64px; height: 64px; border-radius: 6px; overflow: hidden; background: #000;
+}
+.tl-photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.tl-checkup-detail { overflow-x: auto; }
+
+.checkup-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+}
+.checkup-table th {
+  text-align: left; padding: 6px 10px; background: #eef2ff;
+  border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12px; color: var(--text-muted);
+}
+.checkup-table td {
+  padding: 6px 10px; border-bottom: 1px solid #f0f0f0;
+}
+.ct-tooth { font-weight: 700; }
+.ct-notes { color: var(--text-muted); max-width: 200px; }
+
+.status-tag {
+  padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+}
+.st-good { background: #dcfce7; color: var(--success); }
+.st-worn { background: #fef3c7; color: var(--warning); }
+.st-lost { background: #fee2e2; color: var(--danger); }
+.st-rebond { background: #dbeafe; color: var(--primary); }
+
 .modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
 }
-
-.modal {
-  width: 420px;
-  max-width: 90vw;
-  max-height: 90vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
-}
+.modal { width: 420px; max-width: 90vw; max-height: 90vh; overflow: hidden; display: flex; flex-direction: column; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border); }
 .modal-header h3 { font-size: 16px; font-weight: 600; }
-.modal-close {
-  font-size: 18px;
-  color: var(--text-muted);
-  padding: 4px 8px;
-  border-radius: 4px;
-}
+.modal-close { font-size: 18px; color: var(--text-muted); padding: 4px 8px; border-radius: 4px; }
 .modal-close:hover { background: #f3f4f6; color: var(--text); }
-
-.modal-body {
-  padding: 20px;
-  overflow-y: auto;
-}
-
-.form-row {
-  margin-bottom: 16px;
-}
+.modal-body { padding: 20px; overflow-y: auto; }
+.form-row { margin-bottom: 16px; }
 .form-row:last-child { margin-bottom: 0; }
-
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
-}
+.modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }
 </style>

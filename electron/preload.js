@@ -25,5 +25,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createPhoto: (data) => ipcRenderer.invoke('photo:create', data),
   deletePhoto: (id) => ipcRenderer.invoke('photo:delete', id),
   savePhoto: (base64Data, fileName) => ipcRenderer.invoke('photo:save', base64Data, fileName),
-  readPhoto: (filePath) => ipcRenderer.invoke('photo:read', filePath)
+  readPhoto: (filePath) => ipcRenderer.invoke('photo:read', filePath),
+
+  // Checkups
+  listCheckups: (patientId) => ipcRenderer.invoke('checkup:list', patientId),
+  getCheckup: (id) => ipcRenderer.invoke('checkup:get', id),
+  createCheckup: (data) => ipcRenderer.invoke('checkup:create', data),
+  deleteCheckup: (id) => ipcRenderer.invoke('checkup:delete', id),
+  listCheckupItems: (checkupId) => ipcRenderer.invoke('checkup_item:list', checkupId),
+
+  // Export / Import
+  exportPatient: (patientId) => ipcRenderer.invoke('export:patient', patientId),
+  exportPatientToFile: (patientId) => ipcRenderer.invoke('export:patientToFile', patientId),
+  importPatientFromFile: () => ipcRenderer.invoke('import:patientFromFile')
 })

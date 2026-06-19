@@ -122,3 +122,74 @@ ipcMain.handle('photo:read', (_, filePath) => {
     return null
   }
 })
+
+// ------------------ Checkups ------------------
+ipcMain.handle('checkup:list', (_, patientId) => db.getCheckupsByPatient(patientId))
+ipcMain.handle('checkup:get', (_, id) => db.getCheckup(id))
+ipcMain.handle('checkup:create', (_, data) => db.createCheckup(data))
+ipcMain.handle('checkup:delete', (_, id) => db.deleteCheckup(id))
+ipcMain.handle('checkup_item:list', (_, checkupId) => db.getCheckupItemsByCheckup(checkupId))
+
+// ------------------ Export / Import ------------------
+ipcMain.handle('export:patient', (_, patientId) => db.getPatientFullData(patientId))
+
+ipcMain.handle('export:patientToFile', async (_, patientId) => {
+  const data = db.getPatientFullData(patientId)
+  if (!data) return null
+  const photosDir = path.join(app.getPath('userData'), 'photos')
+  const exportedPhotos = []
+  if (data.photos) {
+    for (const p of data.photos) {
+      try {
+        const imgData = fs.readFileSync(p.file_path)
+        const ext = path.extname(p.file_path) || '.png'
+        exportedPhotos.push({ ...p, _base64: imgData.toString('base64'), _ext: ext })
+      } catch (e) {
+        exportedPhotos.push({ ...p, _base64: null, _ext: '.png' })
+      }
+    }
+  }
+  data.photos = exportedPhotos
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出患者数据',
+    defaultPath: `${data.patient.name}_正畸记录_${new Date().toISOString().slice(0, 10)}.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  })
+  if (result.canceled || !result.filePath) return null
+  fs.writeFileSync(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
+  return result.filePath
+})
+
+ipcMain.handle('import:patientFromFile', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '导入患者数据',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile']
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  try {
+    const raw = fs.readFileSync(result.filePaths[0], 'utf-8')
+    const data = JSON.parse(raw)
+    if (!data.patient) throw new Error('Invalid format')
+    const photosDir = path.join(app.getPath('userData'), 'photos')
+    if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true })
+    if (data.photos) {
+      for (const p of data.photos) {
+        if (p._base64) {
+          const timestamp = Date.now() + Math.random()
+          const safeName = `imported_${timestamp}${p._ext || '.png'}`
+          const filePath = path.join(photosDir, safeName)
+          fs.writeFileSync(filePath, Buffer.from(p._base64, 'base64'))
+          p.file_path = filePath
+        }
+        delete p._base64
+        delete p._ext
+      }
+    }
+    const newId = db.importPatientFullData(data)
+    return newId
+  } catch (e) {
+    console.error('Import failed:', e)
+    return null
+  }
+})

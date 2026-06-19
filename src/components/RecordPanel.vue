@@ -281,19 +281,16 @@ watch(selectedTeeth, (teeth) => {
   if (activeTooth.value && !teeth.includes(activeTooth.value)) {
     activeTooth.value = teeth[0] || null
   }
-  syncActiveForm()
-})
+}, { deep: true })
 
-watch(activeTooth, syncActiveForm)
-
-function syncActiveForm() {
+watch(activeTooth, () => {
   if (activeTooth.value && attachmentsMap[activeTooth.value]) {
     const a = attachmentsMap[activeTooth.value]
     activeForm.shape = a.shape
     activeForm.status = a.status
     activeForm.notes = a.notes
   }
-}
+})
 
 function toggleTooth(t) {
   const idx = selectedTeeth.value.indexOf(t)
@@ -318,7 +315,6 @@ function applyBatch() {
       notes: batchForm.notes
     }
   }
-  syncActiveForm()
 }
 
 function updateActiveAttachment() {
@@ -393,7 +389,10 @@ function removePhoto(idx) {
 }
 
 async function saveRecord() {
-  const attachments = Object.values(attachmentsMap)
+  const attachments = selectedTeeth.value
+    .map(t => attachmentsMap[t])
+    .filter(a => a)
+  if (attachments.length === 0) return
   const recordId = await window.electronAPI.createRecord({
     patient_id: props.patient.id,
     notes: recordNotes.value,
@@ -404,14 +403,23 @@ async function saveRecord() {
     await window.electronAPI.createPhoto({ record_id: recordId, file_path: filePath })
   }
   alert('记录已保存！')
+  resetForm()
+  await loadHistory()
+  emit('updated')
+}
+
+function resetForm() {
   selectedTeeth.value = []
   for (const k of Object.keys(attachmentsMap)) delete attachmentsMap[k]
   recordNotes.value = ''
   photos.value = []
   batchForm.shape = ''
+  batchForm.status = 'new'
   batchForm.notes = ''
-  await loadHistory()
-  emit('updated')
+  activeForm.shape = ''
+  activeForm.status = 'new'
+  activeForm.notes = ''
+  activeTooth.value = null
 }
 
 function formatDate(d) {
