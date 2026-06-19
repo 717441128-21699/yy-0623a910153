@@ -4,21 +4,31 @@ const path = require('path')
 class DB {
   constructor(dbPath) {
     this.dbPath = dbPath
+    this._defaultData()
+    this._defaultIds()
+  }
+
+  _defaultData() {
     this.data = {
       patients: [],
       records: [],
       attachments: [],
       photos: [],
       checkups: [],
-      checkup_items: []
+      checkup_items: [],
+      checkup_photos: []
     }
+  }
+
+  _defaultIds() {
     this.ids = {
       patients: 0,
       records: 0,
       attachments: 0,
       photos: 0,
       checkups: 0,
-      checkup_items: 0
+      checkup_items: 0,
+      checkup_photos: 0
     }
   }
 
@@ -27,13 +37,34 @@ class DB {
       try {
         const raw = fs.readFileSync(this.dbPath, 'utf-8')
         const saved = JSON.parse(raw)
-        this.data = saved.data || this.data
-        this.ids = saved.ids || this._computeIds()
+        this._mergeData(saved.data)
+        if (saved.ids) {
+          this._mergeIds(saved.ids)
+        } else {
+          this.ids = this._computeIds()
+        }
       } catch (e) {
         console.error('Failed to load database, using empty:', e.message)
       }
     } else {
       this._save()
+    }
+  }
+
+  _mergeData(savedData) {
+    if (!savedData) return
+    for (const key of Object.keys(this.data)) {
+      this.data[key] = savedData[key] || []
+    }
+  }
+
+  _mergeIds(savedIds) {
+    if (!savedIds) return
+    const computed = this._computeIds()
+    for (const key of Object.keys(this.ids)) {
+      const savedVal = savedIds[key]
+      const computedVal = computed[key] || 0
+      this.ids[key] = Math.max(savedVal || 0, computedVal)
     }
   }
 
@@ -127,6 +158,7 @@ class DB {
     const checkupIds = this.data.checkups.filter(c => c.patient_id === id).map(c => c.id)
     this.data.checkups = this.data.checkups.filter(c => c.patient_id !== id)
     this.data.checkup_items = this.data.checkup_items.filter(ci => !checkupIds.includes(ci.checkup_id))
+    this.data.checkup_photos = this.data.checkup_photos.filter(cp => !checkupIds.includes(cp.checkup_id))
     this._save()
     return { changes: before - this.data.patients.length }
   }
@@ -271,6 +303,7 @@ class DB {
     const before = this.data.checkups.length
     this.data.checkups = this.data.checkups.filter(c => c.id !== id)
     this.data.checkup_items = this.data.checkup_items.filter(ci => ci.checkup_id !== id)
+    this.data.checkup_photos = this.data.checkup_photos.filter(cp => cp.checkup_id !== id)
     this._save()
     return { changes: before - this.data.checkups.length }
   }
@@ -302,6 +335,38 @@ class DB {
     return { changes: before - this.data.checkup_items.length }
   }
 
+  // ---------- Checkup Photos ----------
+  getCheckupPhotosByCheckup(checkupId) {
+    return this.data.checkup_photos
+      .filter(p => p.checkup_id === checkupId)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+  }
+
+  getCheckupPhoto(id) {
+    return this.data.checkup_photos.find(p => p.id === id) || null
+  }
+
+  createCheckupPhoto(data) {
+    const id = this._nextId('checkup_photos')
+    const photo = {
+      id,
+      checkup_id: data.checkup_id,
+      file_path: data.file_path,
+      description: data.description || '',
+      created_at: this._now()
+    }
+    this.data.checkup_photos.push(photo)
+    this._save()
+    return id
+  }
+
+  deleteCheckupPhoto(id) {
+    const before = this.data.checkup_photos.length
+    this.data.checkup_photos = this.data.checkup_photos.filter(p => p.id !== id)
+    this._save()
+    return { changes: before - this.data.checkup_photos.length }
+  }
+
   // ---------- Export / Import ----------
   getPatientFullData(patientId) {
     const patient = this.getPatient(patientId)
@@ -313,6 +378,7 @@ class DB {
     const checkups = this.data.checkups.filter(c => c.patient_id === patientId)
     const checkupIds = checkups.map(c => c.id)
     const checkup_items = this.data.checkup_items.filter(ci => checkupIds.includes(ci.checkup_id))
+    const checkup_photos = this.data.checkup_photos.filter(cp => checkupIds.includes(cp.checkup_id))
     return {
       patient,
       records,
@@ -320,15 +386,16 @@ class DB {
       photos,
       checkups,
       checkup_items,
+      checkup_photos,
       exported_at: this._now(),
-      version: 1
+      version: 2
     }
   }
 
   importPatientFullData(data) {
     const pidOld = data.patient.id
     const pidNew = this._nextId('patients')
-    const idMap = { patients: {}, records: {}, attachments: {}, photos: {}, checkups: {}, checkup_items: {} }
+    const idMap = { patients: {}, records: {}, attachments: {}, photos: {}, checkups: {}, checkup_items: {}, checkup_photos: {} }
     idMap.patients[pidOld] = pidNew
 
     const patient = { ...data.patient, id: pidNew, created_at: this._now(), updated_at: this._now() }
@@ -378,6 +445,14 @@ class DB {
         const ciiNew = this._nextId('checkup_items')
         const mappedCid = idMap.checkups[ci.checkup_id] || ci.checkup_id
         this.data.checkup_items.push({ ...ci, id: ciiNew, checkup_id: mappedCid })
+      }
+    }
+
+    if (data.checkup_photos) {
+      for (const cp of data.checkup_photos) {
+        const cpidNew = this._nextId('checkup_photos')
+        const mappedCid = idMap.checkups[cp.checkup_id] || cp.checkup_id
+        this.data.checkup_photos.push({ ...cp, id: cpidNew, checkup_id: mappedCid })
       }
     }
 

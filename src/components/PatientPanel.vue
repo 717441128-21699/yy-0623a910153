@@ -46,7 +46,7 @@
           <button class="btn btn-secondary btn-sm" @click="exportPatient">📤 导出</button>
           <button class="btn btn-secondary btn-sm" @click="importPatient">📥 导入</button>
           <button class="btn btn-secondary btn-sm" @click="openForm(selectedPatient)">编辑信息</button>
-          <button class="btn btn-primary btn-sm" @click="$emit('select', selectedPatient)">开始记录</button>
+          <button class="btn btn-primary btn-sm" @click="$emit('start-record', selectedPatient)">开始记录</button>
         </div>
       </div>
 
@@ -117,6 +117,12 @@
                       </tr>
                     </tbody>
                   </table>
+                  <div v-if="getCheckupPhotos(ev.id).length > 0" class="tl-photos">
+                    <div class="tl-photos-label">复诊照片 ({{ getCheckupPhotos(ev.id).length }}张)</div>
+                    <div v-for="(p, i) in getCheckupPhotos(ev.id)" :key="i" class="tl-photo-thumb">
+                      <img :src="p.preview" />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -176,7 +182,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 
 const props = defineProps({ selectedId: Number })
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'start-record'])
 
 const patients = ref([])
 const records = ref([])
@@ -184,6 +190,7 @@ const checkups = ref([])
 const attachmentsMap = ref({})
 const photosMap = ref({})
 const checkupItemsMap = ref({})
+const checkupPhotosMap = ref({})
 const searchQuery = ref('')
 const selectedPatient = ref(null)
 const expandedEvent = ref(null)
@@ -232,6 +239,7 @@ async function loadRecords(patientId) {
   attachmentsMap.value = {}
   photosMap.value = {}
   checkupItemsMap.value = {}
+  checkupPhotosMap.value = {}
 
   for (const r of records.value) {
     attachmentsMap.value[r.id] = await window.electronAPI.listAttachments(r.id)
@@ -244,6 +252,11 @@ async function loadRecords(patientId) {
 
   for (const c of checkups.value) {
     checkupItemsMap.value[c.id] = await window.electronAPI.listCheckupItems(c.id)
+    const chPhotos = await window.electronAPI.listCheckupPhotos(c.id)
+    for (const p of chPhotos) {
+      p.preview = await window.electronAPI.readPhoto(p.file_path)
+    }
+    checkupPhotosMap.value[c.id] = chPhotos
   }
 }
 
@@ -318,6 +331,7 @@ function getPhotoCount(recordId) { return photosMap.value[recordId]?.length || 0
 function getAttachments(recordId) { return attachmentsMap.value[recordId] || [] }
 function getPhotos(recordId) { return photosMap.value[recordId] || [] }
 function getCheckupItems(checkupId) { return checkupItemsMap.value[checkupId] || [] }
+function getCheckupPhotos(checkupId) { return checkupPhotosMap.value[checkupId] || [] }
 
 function checkupSummary(checkupId) {
   const items = checkupItemsMap.value[checkupId] || []
@@ -446,6 +460,7 @@ function formatDate(d) {
 .att-notes { color: var(--text-muted); font-size: 12px; flex: 1; }
 
 .tl-photos { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.tl-photos-label { font-size: 12px; color: var(--text-muted); font-weight: 600; margin-bottom: 6px; width: 100%; }
 .tl-photo-thumb {
   width: 64px; height: 64px; border-radius: 6px; overflow: hidden; background: #000;
 }

@@ -29,6 +29,7 @@
       <PatientPanel
         v-if="activeTab === 'patients'"
         @select="onSelectPatient"
+        @start-record="onStartRecord"
         :selectedId="currentPatient?.id"
       />
       <RecordPanel
@@ -61,7 +62,11 @@ const currentPatient = ref(null)
 
 function onSelectPatient(patient) {
   currentPatient.value = patient
-  if (patient) activeTab.value = 'record'
+}
+
+function onStartRecord(patient) {
+  currentPatient.value = patient
+  activeTab.value = 'record'
 }
 
 function onRecordUpdated() {

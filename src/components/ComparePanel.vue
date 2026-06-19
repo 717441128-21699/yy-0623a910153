@@ -161,6 +161,32 @@
               <div class="sum-stat rebond"><span class="sum-label">重粘</span><span class="sum-value">{{ summary.rebond }}</span></div>
             </div>
           </div>
+
+          <div class="checkup-photos">
+            <div class="photos-header">
+              <h4 class="sum-title">📷 本次复诊照片</h4>
+              <button class="btn btn-secondary btn-sm" @click="triggerCheckupPhotoInput">添加照片</button>
+              <input ref="checkupPhotoInput" type="file" accept="image/*" multiple style="display:none" @change="onCheckupPhotoFiles" />
+            </div>
+            <div
+              class="photo-dropzone small"
+              :class="{ drag: isCheckupPhotoDragging }"
+              @dragover.prevent="isCheckupPhotoDragging = true"
+              @dragleave="isCheckupPhotoDragging = false"
+              @drop.prevent="onCheckupPhotoDrop"
+            >
+              <div v-if="checkupPhotos.length === 0" class="dropzone-hint">
+                <div class="dz-icon">🖼️</div>
+                <div>拖放或点击上方按钮添加</div>
+              </div>
+              <div v-else class="photo-grid">
+                <div v-for="(ph, idx) in checkupPhotos" :key="idx" class="photo-item">
+                  <img :src="ph.preview" />
+                  <button class="photo-remove" @click="removeCheckupPhoto(idx)">✕</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="panel photos-panel" v-if="primaryRecord && (primaryPhotos.length || comparePhotos.length)">
@@ -214,6 +240,9 @@ const compareRecord = ref(null)
 
 const checkResults = reactive({})
 const checkNotes = reactive({})
+const checkupPhotos = ref([])
+const isCheckupPhotoDragging = ref(false)
+const checkupPhotoInput = ref(null)
 
 const statusColors = {
   good: 'green',
@@ -385,6 +414,7 @@ function markStatus(tooth, status) {
 function clearMarks() {
   for (const k of Object.keys(checkResults)) delete checkResults[k]
   for (const k of Object.keys(checkNotes)) delete checkNotes[k]
+  checkupPhotos.value = []
 }
 
 async function saveCheckup() {
@@ -403,13 +433,21 @@ async function saveCheckup() {
       })
     }
   }
-  if (items.length === 0) return
+  if (items.length === 0 && checkupPhotos.value.length === 0) {
+    alert('请先标记牙位状态或添加照片')
+    return
+  }
 
-  await window.electronAPI.createCheckup({
+  const checkupId = await window.electronAPI.createCheckup({
     patient_id: props.patient.id,
     reference_record_id: primaryRecord.value.id,
     items
   })
+
+  for (const ph of checkupPhotos.value) {
+    const filePath = await window.electronAPI.savePhoto(ph.preview, ph.name)
+    await window.electronAPI.createCheckupPhoto({ checkup_id: checkupId, file_path: filePath })
+  }
 
   checkups.value = await window.electronAPI.listCheckups(props.patient.id)
   for (const c of checkups.value) {
@@ -420,6 +458,35 @@ async function saveCheckup() {
 
   alert('复诊检查记录已保存！')
   clearMarks()
+}
+
+function triggerCheckupPhotoInput() { checkupPhotoInput.value?.click() }
+
+function onCheckupPhotoFiles(e) {
+  for (const file of e.target.files) addCheckupPhotoFile(file)
+  e.target.value = ''
+}
+
+function onCheckupPhotoDrop(e) {
+  isCheckupPhotoDragging.value = false
+  for (const file of e.dataTransfer.files) {
+    if (file.type.startsWith('image/')) addCheckupPhotoFile(file)
+  }
+}
+
+function addCheckupPhotoFile(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      checkupPhotos.value.push({ name: file.name, preview: ev.target.result })
+      resolve()
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+function removeCheckupPhoto(idx) {
+  checkupPhotos.value.splice(idx, 1)
 }
 
 function formatDate(d) {
@@ -605,4 +672,25 @@ function formatDate(d) {
 .photo-thumb { aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: #000; }
 .photo-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .empty-photos { grid-column: 1 / -1; text-align: center; padding: 20px; color: var(--text-muted); font-size: 12px; background: #f9fafb; border-radius: 6px; }
+
+.checkup-photos { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.photos-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.photo-dropzone {
+  border: 2px dashed var(--border); border-radius: 8px; min-height: 100px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s ease; background: #fafafa;
+}
+.photo-dropzone.small { min-height: 80px; }
+.photo-dropzone.drag { border-color: var(--primary); background: var(--primary-light); }
+.dropzone-hint { text-align: center; color: var(--text-muted); padding: 16px; }
+.dz-icon { font-size: 24px; margin-bottom: 4px; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 8px; padding: 10px; width: 100%; }
+.photo-item { position: relative; aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: #000; }
+.photo-item img { width: 100%; height: 100%; object-fit: cover; }
+.photo-remove {
+  position: absolute; top: 4px; right: 4px; width: 20px; height: 20px;
+  border-radius: 50%; background: rgba(0,0,0,0.6); color: white; font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+}
+.photo-remove:hover { background: var(--danger); }
 </style>

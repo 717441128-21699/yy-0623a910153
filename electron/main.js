@@ -130,13 +130,25 @@ ipcMain.handle('checkup:create', (_, data) => db.createCheckup(data))
 ipcMain.handle('checkup:delete', (_, id) => db.deleteCheckup(id))
 ipcMain.handle('checkup_item:list', (_, checkupId) => db.getCheckupItemsByCheckup(checkupId))
 
+// Checkup Photos
+ipcMain.handle('checkup_photo:list', (_, checkupId) => db.getCheckupPhotosByCheckup(checkupId))
+ipcMain.handle('checkup_photo:create', (_, data) => db.createCheckupPhoto(data))
+ipcMain.handle('checkup_photo:delete', (_, id) => {
+  const photo = db.getCheckupPhoto(id)
+  if (photo && photo.file_path) {
+    try { fs.unlinkSync(photo.file_path) } catch (e) {}
+  }
+  db.deleteCheckupPhoto(id)
+})
+
 // ------------------ Export / Import ------------------
 ipcMain.handle('export:patient', (_, patientId) => db.getPatientFullData(patientId))
 
 ipcMain.handle('export:patientToFile', async (_, patientId) => {
   const data = db.getPatientFullData(patientId)
   if (!data) return null
-  const photosDir = path.join(app.getPath('userData'), 'photos')
+
+  // Embed bonding photos as base64
   const exportedPhotos = []
   if (data.photos) {
     for (const p of data.photos) {
@@ -150,6 +162,22 @@ ipcMain.handle('export:patientToFile', async (_, patientId) => {
     }
   }
   data.photos = exportedPhotos
+
+  // Embed checkup photos as base64
+  const exportedCheckupPhotos = []
+  if (data.checkup_photos) {
+    for (const cp of data.checkup_photos) {
+      try {
+        const imgData = fs.readFileSync(cp.file_path)
+        const ext = path.extname(cp.file_path) || '.png'
+        exportedCheckupPhotos.push({ ...cp, _base64: imgData.toString('base64'), _ext: ext })
+      } catch (e) {
+        exportedCheckupPhotos.push({ ...cp, _base64: null, _ext: '.png' })
+      }
+    }
+  }
+  data.checkup_photos = exportedCheckupPhotos
+
   const result = await dialog.showSaveDialog(mainWindow, {
     title: '导出患者数据',
     defaultPath: `${data.patient.name}_正畸记录_${new Date().toISOString().slice(0, 10)}.json`,
@@ -173,6 +201,8 @@ ipcMain.handle('import:patientFromFile', async () => {
     if (!data.patient) throw new Error('Invalid format')
     const photosDir = path.join(app.getPath('userData'), 'photos')
     if (!fs.existsSync(photosDir)) fs.mkdirSync(photosDir, { recursive: true })
+
+    // Restore bonding photos
     if (data.photos) {
       for (const p of data.photos) {
         if (p._base64) {
@@ -186,6 +216,22 @@ ipcMain.handle('import:patientFromFile', async () => {
         delete p._ext
       }
     }
+
+    // Restore checkup photos
+    if (data.checkup_photos) {
+      for (const cp of data.checkup_photos) {
+        if (cp._base64) {
+          const timestamp = Date.now() + Math.random()
+          const safeName = `imported_checkup_${timestamp}${cp._ext || '.png'}`
+          const filePath = path.join(photosDir, safeName)
+          fs.writeFileSync(filePath, Buffer.from(cp._base64, 'base64'))
+          cp.file_path = filePath
+        }
+        delete cp._base64
+        delete cp._ext
+      }
+    }
+
     const newId = db.importPatientFullData(data)
     return newId
   } catch (e) {
