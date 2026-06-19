@@ -127,6 +127,7 @@
               :key="tooth"
               class="check-item"
               :class="'st-' + (checkResults[tooth] || 'none')"
+              @click="openToothHistory(tooth)"
             >
               <div class="ci-tooth">
                 <span class="ci-num">{{ tooth }}</span>
@@ -135,12 +136,12 @@
                 </span>
               </div>
               <div class="ci-buttons">
-                <button class="st-btn green" :class="{ active: checkResults[tooth] === 'good' }" @click="markStatus(tooth, 'good')" title="完好">✓</button>
-                <button class="st-btn yellow" :class="{ active: checkResults[tooth] === 'worn' }" @click="markStatus(tooth, 'worn')" title="磨耗">⚠</button>
-                <button class="st-btn red" :class="{ active: checkResults[tooth] === 'lost' }" @click="markStatus(tooth, 'lost')" title="脱落">✕</button>
-                <button class="st-btn blue" :class="{ active: checkResults[tooth] === 'rebond' }" @click="markStatus(tooth, 'rebond')" title="重粘">↻</button>
+                <button class="st-btn green" :class="{ active: checkResults[tooth] === 'good' }" @click.stop="markStatus(tooth, 'good')" title="完好">✓</button>
+                <button class="st-btn yellow" :class="{ active: checkResults[tooth] === 'worn' }" @click.stop="markStatus(tooth, 'worn')" title="磨耗">⚠</button>
+                <button class="st-btn red" :class="{ active: checkResults[tooth] === 'lost' }" @click.stop="markStatus(tooth, 'lost')" title="脱落">✕</button>
+                <button class="st-btn blue" :class="{ active: checkResults[tooth] === 'rebond' }" @click.stop="markStatus(tooth, 'rebond')" title="重粘">↻</button>
               </div>
-              <input v-model="checkNotes[tooth]" class="ci-note" placeholder="备注..." />
+              <input v-model="checkNotes[tooth]" class="ci-note" placeholder="备注..." @click.stop />
             </div>
           </div>
 
@@ -180,9 +181,9 @@
                 <div>拖放或点击上方按钮添加</div>
               </div>
               <div v-else class="photo-grid">
-                <div v-for="(ph, idx) in checkupPhotos" :key="idx" class="photo-item">
+                <div v-for="(ph, idx) in checkupPhotos" :key="idx" class="photo-item" @click="openPhotoViewer(checkupPhotos, idx, '本次复诊照片')">
                   <img :src="ph.preview" />
-                  <button class="photo-remove" @click="removeCheckupPhoto(idx)">✕</button>
+                  <button class="photo-remove" @click.stop="removeCheckupPhoto(idx)">✕</button>
                 </div>
               </div>
             </div>
@@ -201,7 +202,7 @@
                 ({{ primaryPhotos.length }}张)
               </div>
               <div class="photos-grid">
-                <div v-for="(p, i) in primaryPhotos" :key="'p'+i" class="photo-thumb"><img :src="p.preview" /></div>
+                <div v-for="(p, i) in primaryPhotos" :key="'p'+i" class="photo-thumb" @click="openPhotoViewer(primaryPhotos, i, '基准记录 · ' + formatDate(primaryRecord.record_date))"><img :src="p.preview" /></div>
                 <div v-if="primaryPhotos.length === 0" class="empty-photos">无照片</div>
               </div>
             </div>
@@ -212,13 +213,56 @@
                 ({{ comparePhotos.length }}张)
               </div>
               <div class="photos-grid">
-                <div v-for="(p, i) in comparePhotos" :key="'c'+i" class="photo-thumb"><img :src="p.preview" /></div>
+                <div v-for="(p, i) in comparePhotos" :key="'c'+i" class="photo-thumb" @click="openPhotoViewer(comparePhotos, i, '对比记录 · ' + formatDate(compareRecord.record_date))"><img :src="p.preview" /></div>
                 <div v-if="comparePhotos.length === 0" class="empty-photos">无照片</div>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      <div v-if="toothHistoryVisible" class="tooth-history-drawer" @click.self="toothHistoryVisible = false">
+        <div class="th-panel">
+          <div class="th-header">
+            <div>
+              <h3>🦷 {{ historyTooth }}号牙 时间线</h3>
+              <div class="th-sub">从粘接到每次复诊的完整记录</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" @click="toothHistoryVisible = false">✕</button>
+          </div>
+          <div class="th-body">
+            <div v-if="toothHistory.length === 0" class="empty-state">
+              <div class="empty-state-icon">📭</div>
+              <div class="empty-state-text">该牙位暂无记录</div>
+            </div>
+            <div v-else class="th-timeline">
+              <div v-for="item in toothHistory" :key="item.key" class="th-item">
+                <div class="th-dot" :class="'thd-' + item.type"></div>
+                <div class="th-content">
+                  <div class="th-date">{{ formatDate(item.date) }}</div>
+                  <div class="th-type">
+                    <span class="badge" :class="item.type === 'bonding' ? 'badge-blue' : 'badge-purple'">
+                      {{ item.type === 'bonding' ? '粘接记录' : '复诊检查' }}
+                    </span>
+                    <span v-if="item.status" class="th-status" :class="'ths-' + item.status">
+                      {{ statusLabel(item.status) }}
+                    </span>
+                  </div>
+                  <div v-if="item.shape" class="th-detail">附件形态：{{ item.shape }}</div>
+                  <div v-if="item.notes" class="th-notes">{{ item.notes }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <PhotoViewer
+        :visible="photoViewerVisible"
+        :photos="photoViewerPhotos"
+        :startIndex="photoViewerIndex"
+        @close="photoViewerVisible = false"
+      />
     </div>
   </div>
 </template>
@@ -226,6 +270,7 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import ToothChart from './ToothChart.vue'
+import PhotoViewer from './PhotoViewer.vue'
 
 const props = defineProps({ patient: Object })
 
@@ -243,6 +288,12 @@ const checkNotes = reactive({})
 const checkupPhotos = ref([])
 const isCheckupPhotoDragging = ref(false)
 const checkupPhotoInput = ref(null)
+
+const toothHistoryVisible = ref(false)
+const historyTooth = ref(null)
+const photoViewerVisible = ref(false)
+const photoViewerPhotos = ref([])
+const photoViewerIndex = ref(0)
 
 const statusColors = {
   good: 'green',
@@ -492,9 +543,60 @@ function removeCheckupPhoto(idx) {
 function formatDate(d) {
   if (!d) return ''
   return new Date(d).toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit'
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
   })
+}
+
+function statusLabel(s) {
+  const map = { good: '完好', worn: '磨耗', lost: '脱落', rebond: '重粘', new: '新粘接' }
+  return map[s] || s
+}
+
+const toothHistory = computed(() => {
+  if (!historyTooth.value) return []
+  const items = []
+  for (const r of records.value) {
+    const att = (attachmentsByRecord[r.id] || []).find(a => a.tooth_number === historyTooth.value)
+    if (att) {
+      items.push({
+        key: 'b-' + r.id,
+        type: 'bonding',
+        date: r.record_date,
+        status: att.status || 'new',
+        shape: att.shape,
+        notes: att.notes || ''
+      })
+    }
+  }
+  for (const c of checkups.value) {
+    const item = (checkupItemsMap[c.id] || []).find(i => i.tooth_number === historyTooth.value)
+    if (item) {
+      items.push({
+        key: 'c-' + c.id,
+        type: 'checkup',
+        date: c.checkup_date,
+        status: item.check_status,
+        shape: null,
+        notes: item.check_notes || ''
+      })
+    }
+  }
+  items.sort((a, b) => new Date(a.date) - new Date(b.date))
+  return items
+})
+
+function openToothHistory(tooth) {
+  historyTooth.value = tooth
+  toothHistoryVisible.value = true
+}
+
+function openPhotoViewer(photos, index, title) {
+  photoViewerPhotos.value = photos.map(p => ({
+    ...p,
+    title: title
+  }))
+  photoViewerIndex.value = index
+  photoViewerVisible.value = true
 }
 </script>
 
@@ -512,6 +614,7 @@ function formatDate(d) {
   gap: 20px;
   height: 100%;
   overflow: hidden;
+  position: relative;
 }
 
 .timeline-sidebar {
@@ -693,4 +796,106 @@ function formatDate(d) {
   display: flex; align-items: center; justify-content: center;
 }
 .photo-remove:hover { background: var(--danger); }
+
+.check-item { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.check-item:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08); }
+
+.tooth-history-drawer {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.th-panel {
+  width: 360px;
+  height: 100%;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  animation: slideInRight 0.25s ease;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.th-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.th-header h3 { font-size: 16px; font-weight: 600; margin: 0 0 4px 0; }
+.th-sub { font-size: 12px; color: var(--text-muted); }
+
+.th-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.th-timeline { position: relative; padding-left: 20px; }
+.th-timeline::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border);
+}
+
+.th-item { position: relative; padding-bottom: 18px; }
+.th-item:last-child { padding-bottom: 0; }
+
+.th-dot {
+  position: absolute;
+  left: -20px;
+  top: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px var(--border);
+}
+.th-dot.thd-bonding { background: var(--primary); box-shadow: 0 0 0 2px var(--primary-light); }
+.th-dot.thd-checkup { background: var(--accent); box-shadow: 0 0 0 2px #ede9fe; }
+
+.th-date {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.th-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.th-status {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.th-status.ths-good { background: #ecfdf5; color: #059669; }
+.th-status.ths-worn { background: #fffbeb; color: #d97706; }
+.th-status.ths-lost { background: #fef2f2; color: #dc2626; }
+.th-status.ths-rebond { background: #eff6ff; color: #2563eb; }
+.th-status.ths-new { background: #faf5ff; color: #9333ea; }
+
+.th-detail { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; }
+.th-notes {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: #f9fafb;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
 </style>

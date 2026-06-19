@@ -50,6 +50,35 @@
         </div>
       </div>
 
+      <div class="overview-cards">
+        <div class="ov-card">
+          <div class="ov-label">最近粘接</div>
+          <div class="ov-value">{{ overview.lastBonding ? formatDateShort(overview.lastBonding) : '—' }}</div>
+          <div class="ov-sub">
+            <span v-if="overview.lastBondingAttach > 0">{{ overview.lastBondingAttach }}颗附件</span>
+            <span v-else class="ov-empty">暂无记录</span>
+          </div>
+        </div>
+        <div class="ov-card">
+          <div class="ov-label">最近复诊</div>
+          <div class="ov-value">{{ overview.lastCheckup ? formatDateShort(overview.lastCheckup) : '—' }}</div>
+          <div class="ov-sub">
+            <span v-if="overview.lastCheckupItems > 0">检查{{ overview.lastCheckupItems }}颗</span>
+            <span v-else class="ov-empty">暂无复诊</span>
+          </div>
+        </div>
+        <div class="ov-card ov-warn">
+          <div class="ov-label">累计脱落</div>
+          <div class="ov-value ov-red">{{ overview.totalLost }}</div>
+          <div class="ov-sub">次脱落记录</div>
+        </div>
+        <div class="ov-card">
+          <div class="ov-label">累计重粘</div>
+          <div class="ov-value ov-blue">{{ overview.totalRebond }}</div>
+          <div class="ov-sub">次重粘记录</div>
+        </div>
+      </div>
+
       <div class="detail-section">
         <h3 class="section-title">📋 就诊记录时间线</h3>
         <div v-if="allEvents.length === 0" class="empty-state">
@@ -92,7 +121,8 @@
                     <span v-if="att.notes" class="att-notes">{{ att.notes }}</span>
                   </div>
                   <div v-if="getPhotos(ev.id).length > 0" class="tl-photos">
-                    <div v-for="(p, i) in getPhotos(ev.id)" :key="i" class="tl-photo-thumb">
+                    <div class="tl-photos-label">粘接照片 ({{ getPhotos(ev.id).length }}张)</div>
+                    <div v-for="(p, i) in getPhotos(ev.id)" :key="i" class="tl-photo-thumb" @click="openPhotoViewer(getPhotos(ev.id), i, '粘接记录 · ' + formatDate(ev.date))">
                       <img :src="p.preview" />
                     </div>
                   </div>
@@ -119,7 +149,7 @@
                   </table>
                   <div v-if="getCheckupPhotos(ev.id).length > 0" class="tl-photos">
                     <div class="tl-photos-label">复诊照片 ({{ getCheckupPhotos(ev.id).length }}张)</div>
-                    <div v-for="(p, i) in getCheckupPhotos(ev.id)" :key="i" class="tl-photo-thumb">
+                    <div v-for="(p, i) in getCheckupPhotos(ev.id)" :key="i" class="tl-photo-thumb" @click="openPhotoViewer(getCheckupPhotos(ev.id), i, '复诊检查 · ' + formatDate(ev.date))">
                       <img :src="p.preview" />
                     </div>
                   </div>
@@ -175,11 +205,19 @@
         </div>
       </div>
     </div>
+
+    <PhotoViewer
+      :visible="photoViewerVisible"
+      :photos="photoViewerPhotos"
+      :startIndex="photoViewerIndex"
+      @close="photoViewerVisible = false"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import PhotoViewer from './PhotoViewer.vue'
 
 const props = defineProps({ selectedId: Number })
 const emit = defineEmits(['select', 'start-record'])
@@ -194,6 +232,9 @@ const checkupPhotosMap = ref({})
 const searchQuery = ref('')
 const selectedPatient = ref(null)
 const expandedEvent = ref(null)
+const photoViewerVisible = ref(false)
+const photoViewerPhotos = ref([])
+const photoViewerIndex = ref(0)
 
 const formVisible = ref(false)
 const editingPatient = ref(null)
@@ -220,17 +261,53 @@ const allEvents = computed(() => {
   return events
 })
 
-watch(() => props.selectedId, (id) => {
-  if (id) {
-    const p = patients.value.find(x => x.id === id)
-    if (p) selectPatient(p)
+const overview = computed(() => {
+  const sortedRecords = [...records.value].sort((a, b) => new Date(b.record_date) - new Date(a.record_date))
+  const sortedCheckups = [...checkups.value].sort((a, b) => new Date(b.checkup_date) - new Date(a.checkup_date))
+  const lastBonding = sortedRecords[0] || null
+  const lastCheckup = sortedCheckups[0] || null
+  let lastBondingAttach = 0
+  if (lastBonding) {
+    lastBondingAttach = (attachmentsMap.value[lastBonding.id] || []).length
   }
-}, { immediate: true })
+  let lastCheckupItems = 0
+  if (lastCheckup) {
+    lastCheckupItems = (checkupItemsMap.value[lastCheckup.id] || []).length
+  }
+  let totalLost = 0
+  let totalRebond = 0
+  for (const cid of Object.keys(checkupItemsMap.value)) {
+    const items = checkupItemsMap.value[cid]
+    for (const item of items) {
+      if (item.check_status === 'lost') totalLost++
+      if (item.check_status === 'rebond') totalRebond++
+    }
+  }
+  return {
+    lastBonding: lastBonding?.record_date || null,
+    lastBondingAttach,
+    lastCheckup: lastCheckup?.checkup_date || null,
+    lastCheckupItems,
+    totalLost,
+    totalRebond
+  }
+})
+
+watch(() => props.selectedId, (id) => {
+  if (id && patients.value.length > 0) {
+    const p = patients.value.find(x => x.id === id)
+    if (p && selectedPatient.value?.id !== id) selectPatient(p)
+  }
+})
 
 onMounted(async () => { await loadPatients() })
 
 async function loadPatients() {
   patients.value = await window.electronAPI.listPatients()
+  if (props.selectedId && !selectedPatient.value) {
+    const p = patients.value.find(x => x.id === props.selectedId)
+    if (p) await selectPatient(p)
+  }
 }
 
 async function loadRecords(patientId) {
@@ -358,6 +435,20 @@ function formatDate(d) {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
   })
 }
+
+function formatDateShort(d) {
+  if (!d) return ''
+  return new Date(d).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+}
+
+function openPhotoViewer(photos, index, title) {
+  photoViewerPhotos.value = photos.map(p => ({
+    ...p,
+    title: title
+  }))
+  photoViewerIndex.value = index
+  photoViewerVisible.value = true
+}
 </script>
 
 <style scoped>
@@ -407,6 +498,38 @@ function formatDate(d) {
 .detail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .detail-section { margin-top: 8px; }
+
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.ov-card {
+  background: #f9fafb;
+  border-radius: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+}
+.ov-card.ov-warn { background: #fffbeb; border-color: #fde68a; }
+.ov-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.ov-value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+.ov-value.ov-red { color: var(--danger); }
+.ov-value.ov-blue { color: var(--primary); }
+.ov-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.ov-empty { opacity: 0.6; }
 .section-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
 
 .timeline { position: relative; padding-left: 20px; }
